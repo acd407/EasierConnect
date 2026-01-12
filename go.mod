@@ -8,6 +8,7 @@ require github.com/pquerna/otp v1.4.0
 
 require (
 	fyne.io/fyne/v2 v2.3.0
+	github.com/gookit/color v1.6.0
 	gvisor.dev/gvisor v0.0.0-20220901235040-6ca97ef2ce1c
 	tailscale.com v1.34.2
 )
@@ -29,7 +30,6 @@ require (
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/goki/freetype v0.0.0-20220119013949-7a161fd3728c // indirect
 	github.com/google/btree v1.0.1 // indirect
-	github.com/gookit/color v1.6.0 // indirect
 	github.com/gopherjs/gopherjs v1.17.2 // indirect
 	github.com/jsummers/gobmp v0.0.0-20151104160322-e2ba15ffa76e // indirect
 	github.com/klauspost/compress v1.15.12 // indirect
