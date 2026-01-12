@@ -32,7 +32,7 @@ func WebLogin(server string, username string, password string) (string, error) {
 		}}
 
 	addr := server + "/por/login_auth.csp?apiversion=1"
-	log.Printf("Login Request: %s", addr)
+	log.Printf("[LOGIN] Connecting to %s...", server[8:]) // strip "https://"
 
 	resp, err := c.Get(addr)
 	if err != nil {
@@ -46,31 +46,29 @@ func WebLogin(server string, username string, password string) (string, error) {
 	n, _ := resp.Body.Read(buf)
 
 	twfId := string(regexp.MustCompile(`<TwfID>(.*)</TwfID>`).FindSubmatch(buf[:n])[1])
-	log.Printf("Twf Id: %s", twfId)
+	log.Printf("[LOGIN] Got session: %s", twfId)
 
 	rsaKey := string(regexp.MustCompile(`<RSA_ENCRYPT_KEY>(.*)</RSA_ENCRYPT_KEY>`).FindSubmatch(buf[:n])[1])
-	log.Printf("RSA Key: %s", rsaKey)
 
 	rsaExpMatch := regexp.MustCompile(`<RSA_ENCRYPT_EXP>(.*)</RSA_ENCRYPT_EXP>`).FindSubmatch(buf[:n])
 	rsaExp := ""
 	if rsaExpMatch != nil {
 		rsaExp = string(rsaExpMatch[1])
 	} else {
-		log.Printf("Warning: No RSA_ENCRYPT_EXP, using default.")
+		log.Printf("[WARN] No RSA_ENCRYPT_EXP found, using default 65537")
 		rsaExp = "65537"
 	}
-	log.Printf("RSA Exp: %s", rsaExp)
 
 	csrfMatch := regexp.MustCompile(`<CSRF_RAND_CODE>(.*)</CSRF_RAND_CODE>`).FindSubmatch(buf[:n])
 	csrfCode := ""
 	if csrfMatch != nil {
 		csrfCode = string(csrfMatch[1])
-		log.Printf("CSRF Code: %s", csrfCode)
 		password += "_" + csrfCode
 	} else {
-		log.Printf("WARNING: No CSRF Code Match. Maybe you're connecting to an older server? Continue anyway...")
+		log.Printf("[WARN] No CSRF code found, maybe connecting to an older server")
 	}
-	log.Printf("Password to encrypt: %s", password)
+
+	log.Printf("[LOGIN] Encrypting credentials...")
 
 	pubKey := rsa.PublicKey{}
 	pubKey.E, _ = strconv.Atoi(rsaExp)
@@ -84,10 +82,9 @@ func WebLogin(server string, username string, password string) (string, error) {
 		return "", err
 	}
 	encryptedPasswordHex := hex.EncodeToString(encryptedPassword)
-	log.Printf("Encrypted Password: %s", encryptedPasswordHex)
 
 	addr = server + "/por/login_psw.csp?anti_replay=1&encrypt=1&type=cs"
-	log.Printf("Login Request: %s", addr)
+	log.Printf("[LOGIN] Authenticating user...")
 
 	form := url.Values{
 		"svpn_rand_code":    {""},
@@ -109,14 +106,11 @@ func WebLogin(server string, username string, password string) (string, error) {
 	n, _ = resp.Body.Read(buf)
 	defer resp.Body.Close()
 
-	// log.Printf("First stage login response: %s", string(buf[:n]))
-
 	// SMS Code Process
 	if strings.Contains(string(buf[:n]), "<NextService>auth/sms</NextService>") || strings.Contains(string(buf[:n]), "<NextAuth>2</NextAuth>") {
-		log.Print("SMS code required.")
+		log.Print("[LOGIN] SMS code required")
 
 		addr = server + "/por/login_sms.csp?apiversion=1"
-		log.Printf("SMS Request: " + addr)
 		req, err = http.NewRequest("POST", addr, nil)
 		req.Header.Set("Cookie", "TWFID="+twfId)
 
@@ -134,19 +128,19 @@ func WebLogin(server string, username string, password string) (string, error) {
 			return "", errors.New("unexpected sms resp: " + string(buf[:n]))
 		}
 
-		log.Printf("SMS Code is sent or still valid.")
+		log.Printf("[LOGIN] SMS code sent, waiting for input...")
 
 		return twfId, ERR_NEXT_AUTH_SMS
 	}
 
-	// TOTP Authnication Process (Edited by JHong)
+	// TOTP Authentication Process
 	if strings.Contains(string(buf[:n]), "<NextService>auth/token</NextService>") || strings.Contains(string(buf[:n]), "<NextServiceSubType>totp</NextServiceSubType>") {
-		log.Print("TOTP Authnication required.")
+		log.Print("[LOGIN] TOTP authentication required")
 		return twfId, ERR_NEXT_AUTH_TOTP
 	}
 
 	if strings.Contains(string(buf[:n]), "<NextAuth>-1</NextAuth>") || !strings.Contains(string(buf[:n]), "<NextAuth>") {
-		log.Print("No NextAuth found.")
+		// No additional auth required, continue
 	} else {
 		debug.PrintStack()
 		return "", errors.New("Not implemented auth: " + string(buf[:n]))
@@ -160,10 +154,9 @@ func WebLogin(server string, username string, password string) (string, error) {
 	twfIdMatch := regexp.MustCompile(`<TwfID>(.*)</TwfID>`).FindSubmatch(buf[:n])
 	if twfIdMatch != nil {
 		twfId = string(twfIdMatch[1])
-		log.Printf("Update twfId: %s", twfId)
 	}
 
-	log.Printf("Web Login process done.")
+	log.Printf("[LOGIN] ✓ Authentication successful")
 
 	return twfId, nil
 }
@@ -177,7 +170,7 @@ func AuthSms(server string, username string, password string, twfId string, smsC
 	buf := make([]byte, 40960)
 
 	addr := "https://" + server + "/por/login_sms1.csp?apiversion=1"
-	log.Printf("SMS Request: " + addr)
+	log.Printf("[LOGIN] Verifying SMS code...")
 	form := url.Values{
 		"svpn_inputsms": {smsCode},
 	}
@@ -200,12 +193,11 @@ func AuthSms(server string, username string, password string, twfId string, smsC
 	}
 
 	twfId = string(regexp.MustCompile(`<TwfID>(.*)</TwfID>`).FindSubmatch(buf[:n])[1])
-	log.Print("SMS Code verification SUCCESS")
+	log.Print("[LOGIN] ✓ SMS verification successful")
 
 	return twfId, nil
 }
 
-// JHong Implementing.......
 func TOTPAuth(server string, username string, password string, twfId string, TOTPCode string) (string, error) {
 	c := &http.Client{
 		Transport: &http.Transport{
@@ -215,7 +207,7 @@ func TOTPAuth(server string, username string, password string, twfId string, TOT
 	buf := make([]byte, 40960)
 
 	addr := "https://" + server + "/por/login_token.csp"
-	log.Printf("TOTP token Request: " + addr)
+	log.Printf("[LOGIN] Verifying TOTP code...")
 	form := url.Values{
 		"svpn_inputtoken": {TOTPCode},
 	}
@@ -238,12 +230,14 @@ func TOTPAuth(server string, username string, password string, twfId string, TOT
 	}
 
 	twfId = string(regexp.MustCompile(`<TwfID>(.*)</TwfID>`).FindSubmatch(buf[:n])[1])
-	log.Print("TOTP verification SUCCESS")
+	log.Print("[LOGIN] ✓ TOTP verification successful")
 
 	return twfId, nil
 }
 
 func ECAgentToken(server string, twfId string) (string, error) {
+	log.Printf("[AGENT] Fetching ECAgent token...")
+
 	dialConn, err := net.Dial("tcp", server)
 	if err != nil {
 		return "", err
@@ -252,13 +246,9 @@ func ECAgentToken(server string, twfId string) (string, error) {
 	conn := utls.UClient(dialConn, &utls.Config{InsecureSkipVerify: true}, utls.HelloGolang)
 	defer conn.Close()
 
-	// WTF???
-	// When you establish a HTTPS connection to server and send a valid request with TWFID to it
-	// The **TLS ServerHello SessionId** is the first part of token
-	log.Printf("ECAgent Request: /por/conf.csp & /por/rclist.csp")
+	// When you establish a HTTPS connection to server and send a valid request with TWFID,
+	// the TLS ServerHello SessionId is the first part of token
 	io.WriteString(conn, "GET /por/conf.csp HTTP/1.1\r\nHost: "+server+"\r\nCookie: TWFID="+twfId+"\r\n\r\nGET /por/rclist.csp HTTP/1.1\r\nHost: "+server+"\r\nCookie: TWFID="+twfId+"\r\n\r\n")
-
-	log.Printf("Server Session ID: %q", conn.HandshakeState.ServerHello.SessionId)
 
 	buf := make([]byte, 40960)
 	totalRead := 0
@@ -279,6 +269,8 @@ func ECAgentToken(server string, twfId string) (string, error) {
 		debug.PrintStack()
 		return "", errors.New("ECAgent Request invalid: no response")
 	}
+
+	log.Printf("[AGENT] ✓ Token acquired")
 
 	return hex.EncodeToString(conn.HandshakeState.ServerHello.SessionId)[:31] + "\x00", nil
 }

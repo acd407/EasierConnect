@@ -24,7 +24,6 @@ func TLSConn(server string) (*tls.UConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Println("socket: connected to: ", dialConn.RemoteAddr())
 
 	// using uTLS to construct a weird TLS Client Hello (required by Sangfor)
 	// The VPN and HTTP Server share port 443, Sangfor uses a special SessionId to distinguish them. (which is very stupid...)
@@ -39,43 +38,39 @@ func TLSConn(server string) (*tls.UConn, error) {
 	conn.HandshakeState.Hello.CompressionMethods = []uint8{0}
 	conn.HandshakeState.Hello.SessionId = []byte{'L', '3', 'I', 'P', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 
-	log.Println("tls: connected to: ", conn.RemoteAddr())
-
 	return conn, nil
 }
 
 func QueryIp(server string, token *[48]byte) ([]byte, *tls.UConn, error) {
+	log.Printf("[VPN] Connecting to %s...", server)
+
 	conn, err := TLSConn(server)
 	if err != nil {
 		debug.PrintStack()
 		return nil, nil, err
 	}
-	// defer conn.Close()
 	// Query IP conn CAN NOT be closed, otherwise tx/rx handshake will fail
+
+	log.Printf("[VPN] TLS handshake successful")
+	log.Printf("[VPN] Querying IP address...")
 
 	// QUERY IP PACKET
 	message := []byte{0x00, 0x00, 0x00, 0x00}
 	message = append(message, token[:]...)
 	message = append(message, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff}...)
 
-	n, err := conn.Write(message)
+	_, err = conn.Write(message)
 	if err != nil {
 		debug.PrintStack()
 		return nil, nil, err
 	}
-
-	log.Printf("query ip: wrote %d bytes", n)
-	DumpHex(message[:n])
 
 	reply := make([]byte, 0x80)
-	n, err = conn.Read(reply)
+	_, err = conn.Read(reply)
 	if err != nil {
 		debug.PrintStack()
 		return nil, nil, err
 	}
-
-	log.Printf("query ip: read %d bytes", n)
-	DumpHex(reply[:n])
 
 	if reply[0] != 0x00 {
 		debug.PrintStack()
@@ -85,7 +80,7 @@ func QueryIp(server string, token *[48]byte) ([]byte, *tls.UConn, error) {
 	return reply[4:8], conn, nil
 }
 
-func BlockRXStream(server string, token *[48]byte, ipRev *[4]byte, ep *EasyConnectEndpoint, debug bool) error {
+func BlockRXStream(server string, token *[48]byte, ipRev *[4]byte, ep *EasyConnectEndpoint, debugDump bool) error {
 	conn, err := TLSConn(server)
 	if err != nil {
 		panic(err)
@@ -98,27 +93,25 @@ func BlockRXStream(server string, token *[48]byte, ipRev *[4]byte, ep *EasyConne
 	message = append(message, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}...)
 	message = append(message, ipRev[:]...)
 
-	n, err := conn.Write(message)
+	_, err = conn.Write(message)
 	if err != nil {
 		return err
 	}
-	log.Printf("recv handshake: wrote %d bytes", n)
-	DumpHex(message[:n])
 
 	reply := make([]byte, 1500)
-	n, err = conn.Read(reply)
+	_, err = conn.Read(reply)
 	if err != nil {
 		return err
 	}
-	log.Printf("recv handshake: read %d bytes", n)
-	DumpHex(reply[:n])
 
 	if reply[0] != 0x01 {
 		return errors.New("unexpected recv handshake reply")
 	}
 
+	log.Printf("[VPN] RX handshake successful")
+
 	for {
-		n, err = conn.Read(reply)
+		n, err := conn.Read(reply)
 
 		if err != nil {
 			return err
@@ -126,14 +119,14 @@ func BlockRXStream(server string, token *[48]byte, ipRev *[4]byte, ep *EasyConne
 
 		ep.WriteTo(reply[:n])
 
-		if debug {
-			log.Printf("recv: read %d bytes", n)
+		if debugDump {
+			log.Printf("[VPN] RX: %d bytes", n)
 			DumpHex(reply[:n])
 		}
 	}
 }
 
-func BlockTXStream(server string, token *[48]byte, ipRev *[4]byte, ep *EasyConnectEndpoint, debug bool) error {
+func BlockTXStream(server string, token *[48]byte, ipRev *[4]byte, ep *EasyConnectEndpoint, debugDump bool) error {
 	conn, err := TLSConn(server)
 	if err != nil {
 		return err
@@ -146,36 +139,34 @@ func BlockTXStream(server string, token *[48]byte, ipRev *[4]byte, ep *EasyConne
 	message = append(message, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}...)
 	message = append(message, ipRev[:]...)
 
-	n, err := conn.Write(message)
+	_, err = conn.Write(message)
 	if err != nil {
 		return err
 	}
-	log.Printf("send handshake: wrote %d bytes", n)
-	DumpHex(message[:n])
 
 	reply := make([]byte, 1500)
-	n, err = conn.Read(reply)
+	_, err = conn.Read(reply)
 	if err != nil {
 		return err
 	}
-	log.Printf("send handshake: read %d bytes", n)
-	DumpHex(reply[:n])
 
 	if reply[0] != 0x02 {
 		return errors.New("unexpected send handshake reply")
 	}
 
+	log.Printf("[VPN] TX handshake successful")
+
 	errCh := make(chan error)
 
 	ep.OnRecv = func(buf []byte) {
-		var n, err = conn.Write(buf)
+		n, err := conn.Write(buf)
 		if err != nil {
 			errCh <- err
 			return
 		}
 
-		if debug {
-			log.Printf("send: wrote %d bytes", n)
+		if debugDump {
+			log.Printf("[VPN] TX: %d bytes", n)
 			DumpHex([]byte(buf[:n]))
 		}
 	}
@@ -183,13 +174,13 @@ func BlockTXStream(server string, token *[48]byte, ipRev *[4]byte, ep *EasyConne
 	return <-errCh
 }
 
-func StartProtocol(endpoint *EasyConnectEndpoint, server string, token *[48]byte, ipRev *[4]byte, debug bool) {
+func StartProtocol(endpoint *EasyConnectEndpoint, server string, token *[48]byte, ipRev *[4]byte, debugDump bool) {
 	RX := func() {
 		counter := 0
 		for counter < 5 {
-			err := BlockRXStream(server, token, ipRev, endpoint, debug)
+			err := BlockRXStream(server, token, ipRev, endpoint, debugDump)
 			if err != nil {
-				log.Print("Error occurred while recv, retrying: " + err.Error())
+				log.Printf("[WARN] RX stream error, retrying (%d/5): %s", counter+1, err.Error())
 			}
 			counter += 1
 		}
@@ -201,9 +192,9 @@ func StartProtocol(endpoint *EasyConnectEndpoint, server string, token *[48]byte
 	TX := func() {
 		counter := 0
 		for counter < 5 {
-			err := BlockTXStream(server, token, ipRev, endpoint, debug)
+			err := BlockTXStream(server, token, ipRev, endpoint, debugDump)
 			if err != nil {
-				log.Print("Error occurred while send, retrying: " + err.Error())
+				log.Printf("[WARN] TX stream error, retrying (%d/5): %s", counter+1, err.Error())
 			}
 			counter += 1
 		}
@@ -211,4 +202,6 @@ func StartProtocol(endpoint *EasyConnectEndpoint, server string, token *[48]byte
 	}
 
 	go TX()
+
+	log.Printf("[VPN] ✓ Tunnel established")
 }

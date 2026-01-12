@@ -58,7 +58,7 @@ func main() {
 				if err != nil {
 					panic(err)
 				}
-				log.Printf("Generated TOTP code %s", TOTPCode)
+				log.Printf("[LOGIN] Generated TOTP code: %s", TOTPCode)
 			}
 
 			ip, err = client.AuthTOTP(TOTPCode)
@@ -68,7 +68,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	log.Printf("Login success, your IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3])
+	log.Printf("[VPN] ✓ Assigned IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3])
 
 	client.ServeSocks5(socksBind, debugDump)
 
