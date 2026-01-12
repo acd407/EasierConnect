@@ -261,10 +261,23 @@ func ECAgentToken(server string, twfId string) (string, error) {
 	log.Printf("Server Session ID: %q", conn.HandshakeState.ServerHello.SessionId)
 
 	buf := make([]byte, 40960)
-	n, err := conn.Read(buf)
-	if n == 0 || err != nil {
+	totalRead := 0
+	// Read all response data. A single Read() may not retrieve the complete
+	// response on some platforms (e.g. Windows), causing subsequent requests to fail.
+	for {
+		n, err := conn.Read(buf[totalRead:])
+		totalRead += n
+		if err != nil {
+			break
+		}
+		if totalRead >= len(buf) {
+			break
+		}
+	}
+
+	if totalRead == 0 {
 		debug.PrintStack()
-		return "", errors.New("ECAgent Request invalid: error " + err.Error() + "\n" + string(buf[:n]))
+		return "", errors.New("ECAgent Request invalid: no response")
 	}
 
 	return hex.EncodeToString(conn.HandshakeState.ServerHello.SessionId)[:31] + "\x00", nil
