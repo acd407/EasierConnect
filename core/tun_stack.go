@@ -1,7 +1,7 @@
 package core
 
 import (
-	"gvisor.dev/gvisor/pkg/bufferv2"
+	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
@@ -68,11 +68,30 @@ func (ep *EasyConnectEndpoint) WritePackets(list stack.PacketBufferList) (int, t
 func (ep *EasyConnectEndpoint) WriteTo(buf []byte) {
 	if ep.IsAttached() {
 		packetBuffer := stack.NewPacketBuffer(stack.PacketBufferOptions{
-			Payload: bufferv2.MakeWithData(buf),
+			Payload: buffer.MakeWithData(buf),
 		})
 		ep.dispatcher.DeliverNetworkPacket(header.IPv4ProtocolNumber, packetBuffer)
 		packetBuffer.DecRef()
 	}
+}
+
+func (ep *EasyConnectEndpoint) Close() {}
+
+func (ep *EasyConnectEndpoint) SetOnCloseAction(action func()) {}
+
+func (ep *EasyConnectEndpoint) ParseHeader(packetBuffer *stack.PacketBuffer) bool {
+	// For our simple endpoint, we don't have a link layer header to parse
+	// Return true to indicate parsing was successful
+	return true
+}
+
+func (ep *EasyConnectEndpoint) SetMTU(mtu uint32) {
+	// For our simple endpoint, we just store the MTU value
+	// In a real implementation, you might want to validate the MTU
+}
+
+func (ep *EasyConnectEndpoint) SetLinkAddress(addr tcpip.LinkAddress) {
+	// For our simple endpoint, we don't need to set link address
 }
 
 func SetupStack(ip []byte, endpoint *EasyConnectEndpoint) *stack.Stack {
@@ -91,7 +110,7 @@ func SetupStack(ip []byte, endpoint *EasyConnectEndpoint) *stack.Stack {
 	}
 
 	// assign ip
-	addr := tcpip.Address(ip)
+	addr := tcpip.AddrFromSlice(ip)
 	protoAddr := tcpip.ProtocolAddress{
 		AddressWithPrefix: tcpip.AddressWithPrefix{
 			Address:   addr,
